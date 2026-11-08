@@ -1,5 +1,5 @@
 {
-    "lrToken": "",
+    "lrToken": "eyJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjExMDk3MTkwLCJzaWQiOjMyNTgsImV4cCI6MTc5NDk1MTQwMCwidHlwIjo0LCJsb2siOiIwMDAwIiwiaXNBZG1pbiI6ZmFsc2UsImRpZCI6ImMxZTcyMzVmLTAyZjktNDQ5MC04OGEyLWUzOGExNGViM2YzMiIsInRvayI6Im90b1JnMmd0YTM3SGhCdGM4VW9WLUEiLCJ0aW1lIjoxNzk0MDg3NDAwfQ.Mq2ajN90FQm20QTT0ecAXIM_QPM_oIO-nopXPHCF-Ko",
     "ffmpegPath": "./bin/ffmpeg",
     "mp4decPath": "./bin/mp4decrypt",
     "tempPath": "./downloads/temp",
