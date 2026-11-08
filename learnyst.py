@@ -6,9 +6,9 @@ session = requests.Session()
 
 # Common Headers for Session
 headers = {
-    "Origin": "https://www.teach101.in",
-    "Referer": "https://www.teach101.in/",
-    "Cache-Control": 'max-age=0, no-cache, must-revalidate, proxy-revalidate',
+    "Origin": "https://premium.mysirg.com",
+    "Referer": "https://premium.mysirg.com/",
+    "Cache-Control": "max-age=0, no-cache, must-revalidate, proxy-revalidate",
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
 }
 
@@ -59,7 +59,7 @@ class Learnyst:
         return Learnyst.lstJs.genURLToken(Learnyst.schoolId, Learnyst.studentId, Learnyst.courseId, Learnyst.lessonId)
 
 
-# Verify the token valdity
+# Verify the token validity
 def checkTokenValidity(token):
     userDataUrl = "https://api.learnyst.com/learner/v4/addresses?device_type=4"
 
@@ -114,9 +114,10 @@ def getCourseDetails(course_id, school_id, token):
     return result
 
 
-# Fetch Signed Video URl details using Token
+# Fetch Signed Video URL details using Token
 def fetchSignedUrl(url_token, content_path, token, ldrm):
-    playbackUrl = "https://api.learnyst.com/learner/v2/lessons/signed_url?device_type=4"
+    # NOTE: v3 endpoint per current Learnyst player
+    playbackUrl = "https://apig.learnyst.com/learner/v2/lessons/signed_url?device_type=4"
 
     playData = {
         "token": url_token,
@@ -132,12 +133,14 @@ def fetchSignedUrl(url_token, content_path, token, ldrm):
     }
     tokenHeader = {
         "authorization": f"Bearer {token}",
-        "lystauthorization": f"Bearer {token}"
+        "lystauthorization": f"Bearer {token}",
+        "Content-Type": "application/json"
     }
     tokenHeader.update(headers)
 
     r = session.post(playbackUrl, json=playData, headers=tokenHeader)
     if r.status_code != 200:
+        print(f"[!] SignedURL HTTP {r.status_code}: {r.text[:300]}")
         return None
 
     result = r.json()
@@ -168,35 +171,41 @@ def getLessonPDF(signed_url):
     return r.content
 
 
-# Perform Handshake with Learnyst DRM Server for Key License
+# Perform Handshake with Learnyst DRM Server for Key License (v3)
 def getLstLicense(challenge, token):
-    lst_license_url = 'https://drm-u.learnyst.com/drmv2/lstdrm'
+    lst_license_url = 'https://drm-u.learnyst.com/drmv3/lstdrm'
 
     tokenHeader = {
-        "x-lrtoken": token
+        "x-lrtoken": token,
+        "x-lmul": "1",
+        "Content-Type": "application/octet-stream",
+        "Accept": "application/json, text/plain, */*",
     }
     tokenHeader.update(headers)
 
     r = session.post(lst_license_url, data=challenge, headers=tokenHeader)
     if r.status_code != 200:
-        print(f"[!] Error: {r.content}")
+        print(f"[!] LSTRM Error {r.status_code}: {r.content[:300]}")
         return None
 
     return r.content
 
 
-# Perform Handshake with Widevine Server for License
+# Perform Handshake with Widevine Server for License (v3)
 def getWidevineLicense(challenge, token):
-    wv_license_url = 'https://drm-u.learnyst.com/drmv2/lgdrm'
+    wv_license_url = 'https://drm-u.learnyst.com/drmv3/lgdrm'
 
     tokenHeader = {
-        "x-lrtoken": token
+        "x-lrtoken": token,
+        "x-lmul": "1",
+        "Content-Type": "application/octet-stream",
+        "Accept": "*/*",
     }
     tokenHeader.update(headers)
 
     r = session.post(wv_license_url, data=challenge, headers=tokenHeader)
     if r.status_code != 200:
-        print(f"[!] Error: {r.content}")
+        print(f"[!] WV License Error {r.status_code}: {r.content[:300]}")
         return None
 
     return r.content
@@ -206,6 +215,7 @@ def getWidevineLicense(challenge, token):
 def getMPDData(mpd_url, decrypter):
     r = session.get(mpd_url, headers=headers)
     if r.status_code != 200:
+        print(f"[!] MPD HTTP {r.status_code}")
         return None
 
     try:
@@ -221,35 +231,38 @@ def parseMPDData(mpd_per):
     rid_kid = {}
     pssh_kid = {}
 
-    # Store KID to corresponding Widevine PSSH and Representation ID
     def readContentProt(rid, cp):
         _pssh = None
-        if cp[2]["@schemeIdUri"].lower() == "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed":
-            _pssh = cp[2]["cenc:pssh"]
+        # ContentProtection can be dict or list
+        cps = cp if isinstance(cp, list) else [cp]
+        for c in cps:
+            if isinstance(c, dict) and c.get("@schemeIdUri", "").lower() == "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed":
+                _pssh = c.get("cenc:pssh")
 
         if _pssh:
             if _pssh not in pssh_kid:
                 pssh_kid[_pssh] = set()
 
-            if cp[0]['@value'].lower() == "cenc":
-                _kid = cp[0]["@cenc:default_KID"].replace("-", "")  # Cleanup
+            # accept cenc AND cbcs (modern Learnyst uses cbcs)
+            for c in cps:
+                if isinstance(c, dict) and c.get("@value", "").lower() in ("cenc", "cbcs"):
+                    _kid = c.get("@cenc:default_KID", "").replace("-", "")
+                    if not _kid:
+                        continue
+                    rid_kid[rid] = {
+                        "kid": _kid,
+                        "pssh": _pssh
+                    }
+                    if _kid not in pssh_kid[_pssh]:
+                        pssh_kid[_pssh].add(_kid)
 
-                rid_kid[rid] = {
-                    "kid": _kid,
-                    "pssh": _pssh
-                }
-                if _kid not in pssh_kid[_pssh]:
-                    pssh_kid[_pssh].add(_kid)
-
-    # Search PSSH and KID
     for ad_set in mpd_per['AdaptationSet']:
         resp = ad_set['Representation']
-        if isinstance(resp, list):
-            for res in resp:
-                if 'ContentProtection' in ad_set:
+        if 'ContentProtection' in ad_set:
+            if isinstance(resp, list):
+                for res in resp:
                     readContentProt(res['@id'], ad_set['ContentProtection'])
-        else:
-            if 'ContentProtection' in ad_set:
+            else:
                 readContentProt(resp['@id'], ad_set['ContentProtection'])
 
     return rid_kid, pssh_kid
